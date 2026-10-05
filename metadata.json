@@ -1,0 +1,8 @@
+{
+  "name": "FarmSense - Smallholder Decision Assistant",
+  "description": "Mobile-first farm decision assistant powered by live African soil, satellite, and weather data with AI advisories and SMS delivery.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
