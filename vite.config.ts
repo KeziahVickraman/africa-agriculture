@@ -1,12 +1,15 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { defineConfig, type Plugin } from 'vite';
 import dotenv from 'dotenv';
 import express from 'express';
 import apiRouter from './server/apiRouter.ts';
 
 dotenv.config();
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 app.use(apiRouter);
