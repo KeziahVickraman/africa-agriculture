@@ -3,6 +3,39 @@ export default async function handler(req: any, res: any) {
   const atConfigured = Boolean(process.env.AT_SANDBOX_API_KEY);
   const geminiConfigured = Boolean(process.env.GEMINI_API_KEY);
 
+  let isdaStatus: string = 'demo_fallback_active';
+  let isdaStatusCode: number | null = null;
+
+  if (isdaConfigured) {
+    try {
+      const bodyParams = new URLSearchParams();
+      bodyParams.append('username', (process.env.ISDA_EMAIL || '').trim());
+      bodyParams.append('password', (process.env.ISDA_PASSWORD || '').trim());
+
+      const loginRes = await fetch('https://api.isda-africa.com/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Accept: 'application/json',
+        },
+        body: bodyParams.toString(),
+      });
+
+      isdaStatusCode = loginRes.status;
+
+      if (loginRes.ok) {
+        const data = await loginRes.json().catch(() => ({}));
+        const hasToken = Boolean(data?.access_token || data?.token || data?.jwt);
+        isdaStatus = hasToken ? 'online' : 'auth_failed';
+      } else {
+        isdaStatus = 'auth_failed';
+      }
+    } catch {
+      isdaStatus = 'auth_failed';
+      isdaStatusCode = 500;
+    }
+  }
+
   const healthPayload = {
     status: 'healthy',
     timestamp: new Date().toISOString(),
@@ -12,10 +45,11 @@ export default async function handler(req: any, res: any) {
     version: '1.0.0',
     integrations: {
       isdaSoil: {
-        status: isdaConfigured ? 'configured' : 'demo_fallback_active',
+        status: isdaStatus,
         endpoint: 'https://api.isda-africa.com/isdasoil/v2',
-        hasEmail: Boolean(process.env.ISDA_EMAIL),
-        hasPassword: Boolean(process.env.ISDA_PASSWORD),
+        loginEndpoint: 'https://api.isda-africa.com/login',
+        ...(isdaStatusCode !== null ? { statusCode: isdaStatusCode } : {}),
+        hasCredentials: isdaConfigured,
       },
       africasTalking: {
         status: atConfigured ? 'configured' : 'simulator_preview_only',

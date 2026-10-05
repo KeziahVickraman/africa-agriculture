@@ -11,10 +11,43 @@ router.use(express.urlencoded({ extended: true }));
  * GET /api/health
  * Comprehensive health status of FarmSense API Gateway and integrations
  */
-router.get('/health', (req, res) => {
+router.get('/health', async (req, res) => {
   const isdaConfigured = Boolean(process.env.ISDA_EMAIL && process.env.ISDA_PASSWORD);
   const atConfigured = Boolean(process.env.AT_SANDBOX_API_KEY);
   const geminiConfigured = Boolean(process.env.GEMINI_API_KEY);
+
+  let isdaStatus: string = 'demo_fallback_active';
+  let isdaStatusCode: number | null = null;
+
+  if (isdaConfigured) {
+    try {
+      const bodyParams = new URLSearchParams();
+      bodyParams.append('username', (process.env.ISDA_EMAIL || '').trim());
+      bodyParams.append('password', (process.env.ISDA_PASSWORD || '').trim());
+
+      const loginRes = await fetch('https://api.isda-africa.com/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Accept: 'application/json',
+        },
+        body: bodyParams.toString(),
+      });
+
+      isdaStatusCode = loginRes.status;
+
+      if (loginRes.ok) {
+        const data = await loginRes.json().catch(() => ({}));
+        const hasToken = Boolean(data?.access_token || data?.token || data?.jwt);
+        isdaStatus = hasToken ? 'online' : 'auth_failed';
+      } else {
+        isdaStatus = 'auth_failed';
+      }
+    } catch {
+      isdaStatus = 'auth_failed';
+      isdaStatusCode = 500;
+    }
+  }
 
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.json({
@@ -26,10 +59,11 @@ router.get('/health', (req, res) => {
     version: '1.0.0',
     integrations: {
       isdaSoil: {
-        status: isdaConfigured ? 'configured' : 'demo_fallback_active',
+        status: isdaStatus,
         endpoint: 'https://api.isda-africa.com/isdasoil/v2',
-        hasEmail: Boolean(process.env.ISDA_EMAIL),
-        hasPassword: Boolean(process.env.ISDA_PASSWORD),
+        loginEndpoint: 'https://api.isda-africa.com/login',
+        ...(isdaStatusCode !== null ? { statusCode: isdaStatusCode } : {}),
+        hasCredentials: isdaConfigured,
       },
       africasTalking: {
         status: atConfigured ? 'configured' : 'simulator_preview_only',
