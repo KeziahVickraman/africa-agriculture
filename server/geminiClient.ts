@@ -25,28 +25,33 @@ export interface GenerateAdvisoryParams {
   totalRain7DaysMm?: number;
   satelliteCloudCoverPercent?: number;
   satelliteDate?: string;
-  limeDecision: string;
-  plantingDecision: string;
-  satelliteDecision: string;
-  language: 'en' | 'sw';
+  limeDecision?: string;
+  plantingDecision?: string;
+  satelliteDecision?: string;
+  language: 'en' | 'sw' | 'ta';
+  region?: 'africa' | 'india';
+  indiaDecisionsSummary?: string; // Summary of irrigate, spray, sow, soil, sell, harvest, alerts
 }
 
 // In-memory advisory cache to eliminate duplicate network calls
-const advisoryCache = new Map<string, { text: string; language: 'en' | 'sw'; wordCount: number; generatedBy: string }>();
+const advisoryCache = new Map<string, { text: string; language: 'en' | 'sw' | 'ta'; wordCount: number; generatedBy: string }>();
 
 // Quota exhaustion cooldown tracking (timestamp ms)
 let quotaExhaustedUntil = 0;
 
 export async function generateAdvisory(params: GenerateAdvisoryParams): Promise<{
   text: string;
-  language: 'en' | 'sw';
+  language: 'en' | 'sw' | 'ta';
   wordCount: number;
   generatedBy: string;
 }> {
+  const isTamil = params.language === 'ta';
   const isSwahili = params.language === 'sw';
+  const isIndia = params.region === 'india' || isTamil;
+  const maxWords = isIndia ? 60 : 80;
 
-  // Build cache key based on rounded coordinates and key agronomic values
-  const cacheKey = `${params.coords.lat.toFixed(3)}_${params.coords.lon.toFixed(3)}_${params.language}_${params.soilPh?.toFixed(1) || '0'}_${params.totalRain7DaysMm?.toFixed(0) || '0'}_${params.satelliteCloudCoverPercent?.toFixed(0) || '0'}`;
+  // Build cache key based on coordinates, language, and core inputs
+  const cacheKey = `${params.coords.lat.toFixed(3)}_${params.coords.lon.toFixed(3)}_${params.language}_${params.soilPh?.toFixed(1) || '0'}_${params.totalRain7DaysMm?.toFixed(0) || '0'}_${params.satelliteCloudCoverPercent?.toFixed(0) || '0'}_${params.indiaDecisionsSummary ? params.indiaDecisionsSummary.slice(0, 30) : ''}`;
 
   if (advisoryCache.has(cacheKey)) {
     return advisoryCache.get(cacheKey)!;
@@ -54,11 +59,9 @@ export async function generateAdvisory(params: GenerateAdvisoryParams): Promise<
 
   // If currently in a 429 quota cooldown, immediately use the deterministic advisory generator
   const isQuotaCoolingDown = Date.now() < quotaExhaustedUntil;
-
   const ai = !isQuotaCoolingDown ? getGenAIClient() : null;
 
-  if (ai) {
-    const dataContext = `
+  const dataContext = `
 LOCATION: ${params.locationName} (Lat ${params.coords.lat.toFixed(3)}, Lon ${params.coords.lon.toFixed(3)})
 SOIL DATA:
 - Topsoil pH: ${params.soilPh != null ? params.soilPh.toFixed(2) : 'Not available'}
@@ -73,29 +76,35 @@ SATELLITE SCENE (Sentinel-2):
 - Recent Cloud Cover: ${params.satelliteCloudCoverPercent != null ? `${params.satelliteCloudCoverPercent.toFixed(1)}%` : 'Not available'}
 - Scene Date: ${params.satelliteDate || 'Not available'}
 
-DECISION RULE RESULTS:
-1. Apply Lime before NPK: "${params.limeDecision}"
-2. Plant this week: "${params.plantingDecision}"
-3. Fresh satellite view available: "${params.satelliteDecision}"
+DECISIONS SUMMARY:
+${params.indiaDecisionsSummary || `
+1. Apply Lime: "${params.limeDecision || 'N/A'}"
+2. Plant this week: "${params.plantingDecision || 'N/A'}"
+3. Satellite view: "${params.satelliteDecision || 'N/A'}"
+`}
 `;
 
-    const systemInstruction = `You are FarmSense, an agronomy decision assistant for smallholder farmers.
-Turn the provided numbers and decision rule results into a clear, direct, actionable advisory of MAXIMUM 80 WORDS.
+  const systemInstruction = `You are FarmSense, an agronomy decision assistant for family farmers.
+Turn the provided numbers and decision rule results into a clear, direct, actionable daily advisory of MAXIMUM ${maxWords} WORDS.
 CRITICAL CONSTRAINTS:
-1. You MUST ONLY explain the rule results and exact numbers provided above. DO NOT invent, extrapolate, or hallucinate any numbers or metrics.
-2. Target audience is smallholder farmers. Keep sentences crisp, friendly, and practical.
-3. If language is Swahili ('sw'), write in clear, natural Kiswahili spoken across Kenya and East Africa.
-4. If language is English ('en'), write in plain, accessible English without overly academic jargon.
-5. Max length: 80 words. Be concise.`;
+1. You MUST ONLY explain the rule results and exact numbers provided above. DO NOT invent, extrapolate, or hallucinate any numbers, prices, or weather warnings.
+2. Target audience is a smallholder family farming. Keep sentences crisp, friendly, and practical.
+3. If language is Tamil ('ta'), write in clear, natural Tamil (தமிழ்).
+4. If language is Swahili ('sw'), write in clear, natural Kiswahili.
+5. If language is English ('en'), write in plain, accessible English.
+6. Max length: strictly under ${maxWords} words. Be concise.`;
 
-    // Try models in order: gemini-3.8-flash, then fallback to gemini-2.5-flash
+  if (ai) {
     const modelsToTry = ['gemini-3.8-flash', 'gemini-2.5-flash'];
 
     for (const model of modelsToTry) {
       try {
-        const prompt = isSwahili
-          ? `Tengeneza ujumbe mfupi wa ushauri wa kilimo (maneno yasiyozidi 80) kwa mkulima katika lugha ya Kiswahili kulingana na data hii tu bila kubuni nambari:\n${dataContext}`
-          : `Generate a concise farm advisory (maximum 80 words) for the farmer based strictly on these verified numbers and decisions:\n${dataContext}`;
+        let prompt = `Generate a concise farm advisory (maximum ${maxWords} words) based strictly on these verified numbers and decisions:\n${dataContext}`;
+        if (isTamil) {
+          prompt = `இந்த தகவல்களின் அடிப்படையில் விவசாயிக்கு சுருக்கமான தினசரி ஆலோசனை (அதிகபட்சம் ${maxWords} வார்த்தைகள்) தமிழில் எழுதவும். எண்களையோ விலையையோ சொந்தமாக உருவாக்க வேண்டாம்:\n${dataContext}`;
+        } else if (isSwahili) {
+          prompt = `Tengeneza ujumbe mfupi wa ushauri wa kilimo (maneno yasiyozidi ${maxWords}) kwa mkulima katika lugha ya Kiswahili kulingana na data hii tu bila kubuni nambari:\n${dataContext}`;
+        }
 
         const response = await ai.models.generateContent({
           model,
@@ -119,23 +128,34 @@ CRITICAL CONSTRAINTS:
           return result;
         }
       } catch (err: any) {
-        // Detect 429 quota exhaustion or resource exhausted errors
         const errMsg = String(err?.message || err);
         const isQuotaErr = errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('Quota exceeded');
-
         if (isQuotaErr) {
-          // Set 1-hour cooldown so we don't spam doomed requests
           quotaExhaustedUntil = Date.now() + 60 * 60 * 1000;
-          break; // Stop attempting other models if project daily quota is exhausted
+          break;
         }
       }
     }
   }
 
-  // Deterministic rule-grounded advisory engine (exact numbers, max 80 words)
+  // Deterministic rule-grounded fallback advisory
   let fallbackText = '';
-  if (isSwahili) {
-    if (params.limeDecision.toLowerCase().includes('lime') || (params.soilPh && params.soilPh < 5.5)) {
+  if (isTamil) {
+    if (params.soilPh && params.soilPh > 8.5) {
+      fallbackText = `இன்றைய பண்ணை ஆலோசனை: நிலத்தின் காரத்தன்மை pH ${params.soilPh.toFixed(1)} ஆக உள்ளது (ஜிப்சம் தேவைப்படலாம்). ${
+        params.totalRain7DaysMm && params.totalRain7DaysMm >= 10
+          ? `அடுத்த 7 நாட்களில் ${params.totalRain7DaysMm.toFixed(0)} மிமீ மழை வாய்ப்புள்ளது; பாசனம் தவிர்க்கவும்.`
+          : 'மழை வாய்ப்பு குறைவு; பயிருக்கு தேவையான பாசனம் செய்யவும்.'
+      } மண் பரிசோதனை அட்டை மூலம் உறுதிப்படுத்தவும்.`;
+    } else {
+      fallbackText = `இன்றைய பண்ணை ஆலோசனை: நிலத்தின் pH ${params.soilPh?.toFixed(1) || '8.0'} சாதகமாக உள்ளது. ${
+        params.totalRain7DaysMm && params.totalRain7DaysMm >= 25
+          ? `7 நாள் மழை ${params.totalRain7DaysMm.toFixed(0)} மிமீ எதிர்பார்க்கப்படுகிறது; நடவுக்கு சாதகமான ஈரப்பதம்.`
+          : `7 நாள் மழை ${params.totalRain7DaysMm?.toFixed(0) || '0'} மிமீ மட்டுமே; போதிய ஈரப்பதம் வரும்வரை காத்திருக்கவும்.`
+      } மண்டியில் நல்ல விலையை ஒப்பிட்டு விற்கவும்.`;
+    }
+  } else if (isSwahili) {
+    if (params.limeDecision?.toLowerCase().includes('lime') || (params.soilPh && params.soilPh < 5.5)) {
       fallbackText = `Ushauri wa Shamba: Udongo una asidi kali (pH ${params.soilPh?.toFixed(1) || 'chini ya 5.5'}). Weka chokaa cha kilimo kabla ya mbolea ya NPK ili virutubisho visipotee. ${
         params.totalRain7DaysMm && params.totalRain7DaysMm >= 20
           ? `Mvua ya siku 7 inatarajiwa kuwa mm ${params.totalRain7DaysMm.toFixed(0)}, nzuri kuanza kazi ya shamba.`
@@ -149,18 +169,19 @@ CRITICAL CONSTRAINTS:
       } Satelaiti inaonyesha mawingu ya ${params.satelliteCloudCoverPercent?.toFixed(0) || '0'}%.`;
     }
   } else {
-    if (params.limeDecision.toLowerCase().includes('lime') || (params.soilPh && params.soilPh < 5.5)) {
-      fallbackText = `Farm Advisory: Topsoil is acidic at pH ${params.soilPh?.toFixed(2) || '< 5.5'}. Apply agricultural lime before NPK fertilizer to prevent nutrient lockup. ${
-        params.totalRain7DaysMm && params.totalRain7DaysMm >= 20
-          ? `Forecast shows ${params.totalRain7DaysMm.toFixed(1)} mm rain ahead—good moisture, but treat soil acidity first.`
-          : `Wait on planting: 7-day rain is only ${params.totalRain7DaysMm?.toFixed(1) || 'low'} mm (20 mm recommended).`
-      } Recent Sentinel-2 scene cloud cover is ${params.satelliteCloudCoverPercent?.toFixed(0) || '0'}%.`;
+    // English
+    if (isIndia) {
+      fallbackText = `Farm Advisory: Topsoil pH is ${params.soilPh?.toFixed(1) || '8.0'} (${params.soilPh && params.soilPh > 8.5 ? 'sodic/alkaline; gypsum may help' : 'slightly alkaline'}). ${
+        params.totalRain7DaysMm && params.totalRain7DaysMm >= 10
+          ? `Next 7-day rain is ${params.totalRain7DaysMm.toFixed(1)} mm; hold off routine irrigation.`
+          : `Dry weather ahead (${params.totalRain7DaysMm?.toFixed(1) || '0'} mm rain); proceed with scheduled irrigation.`
+      } Check mandi prices before selling.`;
     } else {
-      fallbackText = `Farm Advisory: Soil pH is favorable at ${params.soilPh?.toFixed(2) || 'optimal'}. Lime is not required before fertilizer. ${
+      fallbackText = `Farm Advisory: Topsoil pH is ${params.soilPh?.toFixed(2) || 'optimal'}. ${
         params.totalRain7DaysMm && params.totalRain7DaysMm >= 20
-          ? `Conditions are green: ${params.totalRain7DaysMm.toFixed(1)} mm rain forecast over 7 days allows planting this week.`
-          : `Hold planting: forecast rain is ${params.totalRain7DaysMm?.toFixed(1) || '0'} mm, below the 20 mm threshold.`
-      } Latest satellite pass has ${params.satelliteCloudCoverPercent?.toFixed(0) || '0'}% cloud cover.`;
+          ? `Forecast shows ${params.totalRain7DaysMm.toFixed(1)} mm rain ahead—good moisture for field operations.`
+          : `7-day rain is only ${params.totalRain7DaysMm?.toFixed(1) || 'low'} mm (20 mm recommended).`
+      } Recent Sentinel-2 scene cloud cover is ${params.satelliteCloudCoverPercent?.toFixed(0) || '0'}%.`;
     }
   }
 

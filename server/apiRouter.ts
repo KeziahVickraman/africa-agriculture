@@ -2,6 +2,7 @@ import express from 'express';
 import { getLiveSoilData, getSampleSoilData } from './isdaClient.ts';
 import { sendSandboxSms } from './smsClient.ts';
 import { generateAdvisory, GenerateAdvisoryParams } from './geminiClient.ts';
+import { getIsricSoil, getEarthSearchSentinel, getMandiData } from './indiaClient.ts';
 
 const router = express.Router();
 router.use(express.json());
@@ -9,13 +10,18 @@ router.use(express.urlencoded({ extended: true }));
 
 /**
  * GET /api/health
- * Comprehensive health status of FarmSense API Gateway and integrations
+ * Comprehensive health status of FarmSense API Gateway and all regional integrations:
+ * Africa: isdaSoil, africasTalking, digitalEarthAfrica, openMeteo
+ * India: soilGrids, earthSearch, openMeteoIndia, dataGovIn
  */
 router.get('/health', async (req, res) => {
   const isdaConfigured = Boolean(process.env.ISDA_EMAIL && process.env.ISDA_PASSWORD);
   const atConfigured = Boolean(process.env.AT_SANDBOX_API_KEY);
   const geminiConfigured = Boolean(process.env.GEMINI_API_KEY);
+  const dataGovInKey = process.env.DATA_GOV_IN_API_KEY?.trim();
+  const hasDataGovInKey = Boolean(dataGovInKey);
 
+  // iSDA login probe
   let isdaStatus: string = 'demo_fallback_active';
   let isdaStatusCode: number | null = null;
 
@@ -49,6 +55,32 @@ router.get('/health', async (req, res) => {
     }
   }
 
+  // data.gov.in Agmarknet probe
+  let dataGovInStatus = 'no_data_today';
+  let dataGovInStatusCode: number | null = null;
+
+  if (hasDataGovInKey) {
+    try {
+      const url = `https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070?api-key=${dataGovInKey}&format=json&limit=1&filters[state.keyword]=Tamil%20Nadu`;
+      const mandiRes = await fetch(url);
+      dataGovInStatusCode = mandiRes.status;
+
+      if (mandiRes.ok) {
+        const json = await mandiRes.json().catch(() => ({}));
+        if (Array.isArray(json.records) && json.records.length > 0) {
+          dataGovInStatus = 'online';
+        } else {
+          dataGovInStatus = 'no_data_today';
+        }
+      } else {
+        dataGovInStatus = 'auth_failed';
+      }
+    } catch {
+      dataGovInStatus = 'auth_failed';
+      dataGovInStatusCode = 500;
+    }
+  }
+
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.json({
     status: 'healthy',
@@ -56,8 +88,9 @@ router.get('/health', async (req, res) => {
     uptimeSeconds: Math.floor(process.uptime ? process.uptime() : 0),
     environment: process.env.NODE_ENV || 'production',
     service: 'FarmSense API Gateway',
-    version: '1.0.0',
+    version: '1.1.0',
     integrations: {
+      // Africa Integrations
       isdaSoil: {
         status: isdaStatus,
         endpoint: 'https://api.isda-africa.com/isdasoil/v2',
@@ -72,11 +105,6 @@ router.get('/health', async (req, res) => {
         username: process.env.AT_SANDBOX_USERNAME || 'sandbox',
         hasApiKey: atConfigured,
       },
-      geminiAi: {
-        status: geminiConfigured ? 'configured' : 'rule_fallback_active',
-        model: 'gemini-3.8-flash',
-        hasApiKey: geminiConfigured,
-      },
       digitalEarthAfrica: {
         status: 'online',
         endpoint: 'https://explorer.digitalearth.africa/stac/search',
@@ -87,18 +115,53 @@ router.get('/health', async (req, res) => {
         endpoint: 'https://api.open-meteo.com/v1/forecast',
         authRequired: false,
       },
+
+      // South India Integrations
+      soilGrids: {
+        status: 'online',
+        endpoint: 'https://rest.isric.org/soilgrids/v2.0',
+        caching: '30-day server cache active',
+        authRequired: false,
+      },
+      earthSearch: {
+        status: 'online',
+        endpoint: 'https://earth-search.aws.element84.com/v1',
+        authRequired: false,
+      },
+      openMeteoIndia: {
+        status: 'online',
+        timezone: 'Asia/Kolkata',
+        endpoint: 'https://api.open-meteo.com/v1/forecast',
+        authRequired: false,
+      },
+      dataGovIn: {
+        status: dataGovInStatus,
+        ...(dataGovInStatusCode !== null ? { statusCode: dataGovInStatusCode } : {}),
+        hasApiKey: hasDataGovInKey,
+        resourceId: '9ef84268-d588-465a-a308-a864a43d0070',
+        note: hasDataGovInKey
+          ? 'Live Agmarknet feed query active'
+          : 'Snapshot mode active (Agmarknet Tamil Nadu baseline)',
+      },
+
+      // Shared AI
+      geminiAi: {
+        status: geminiConfigured ? 'configured' : 'rule_fallback_active',
+        model: 'gemini-3.8-flash',
+        hasApiKey: geminiConfigured,
+      },
     },
   });
 });
 
 /**
  * GET /api/config-status
- * Check which integrations are configured without revealing secrets
  */
 router.get('/config-status', (req, res) => {
   const hasIsda = Boolean(process.env.ISDA_EMAIL && process.env.ISDA_PASSWORD);
   const hasAt = Boolean(process.env.AT_SANDBOX_API_KEY);
   const hasGemini = Boolean(process.env.GEMINI_API_KEY);
+  const hasDataGovIn = Boolean(process.env.DATA_GOV_IN_API_KEY);
 
   res.json({
     status: 'ok',
@@ -117,13 +180,17 @@ router.get('/config-status', (req, res) => {
         configured: hasGemini,
         model: 'gemini-3.8-flash',
       },
+      dataGovIn: {
+        configured: hasDataGovIn,
+        resource: 'National Mandi Prices - Agmarknet',
+      },
     },
   });
 });
 
 /**
  * GET /api/soil
- * Query iSDAsoil API server-side with cached JWT
+ * Query iSDAsoil API server-side with cached JWT (Africa)
  */
 router.get('/soil', async (req, res) => {
   const latStr = req.query.lat as string;
@@ -140,7 +207,6 @@ router.get('/soil', async (req, res) => {
   const hasCredentials = Boolean(process.env.ISDA_EMAIL && process.env.ISDA_PASSWORD);
 
   if (forceDemo || !hasCredentials) {
-    // Return sample benchmark data for pilot location
     const sample = getSampleSoilData(lat, lon);
     return res.json({
       ...sample,
@@ -155,7 +221,6 @@ router.get('/soil', async (req, res) => {
     return res.json(liveData);
   } catch (err: any) {
     console.error('Error fetching live iSDA soil data:', err.message);
-    // Provide structured error with fallback demo data so user can inspect problem and still use app
     const fallbackSample = getSampleSoilData(lat, lon);
     return res.status(200).json({
       ...fallbackSample,
@@ -166,6 +231,58 @@ router.get('/soil', async (req, res) => {
         benchmarkUsed: true,
       },
     });
+  }
+});
+
+/**
+ * GET /api/india/soil
+ * Query ISRIC SoilGrids v2.0 with 30-day caching
+ */
+router.get('/india/soil', async (req, res) => {
+  const latStr = req.query.lat as string;
+  const lonStr = req.query.lon as string;
+  const lat = parseFloat(latStr || '13.08');
+  const lon = parseFloat(lonStr || '80.27');
+
+  try {
+    const soilData = await getIsricSoil(lat, lon);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.json(soilData);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/india/satellite
+ * Query Earth Search Sentinel-2 STAC for farm coordinates
+ */
+router.get('/india/satellite', async (req, res) => {
+  const latStr = req.query.lat as string;
+  const lonStr = req.query.lon as string;
+  const lat = parseFloat(latStr || '13.08');
+  const lon = parseFloat(lonStr || '80.27');
+
+  try {
+    const sceneData = await getEarthSearchSentinel(lat, lon);
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    return res.json(sceneData);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/india/mandi
+ * Query data.gov.in Agmarknet mandi prices with 7-day trend
+ */
+router.get('/india/mandi', async (req, res) => {
+  try {
+    const mandiData = await getMandiData();
+    res.setHeader('Cache-Control', 'public, max-age=1800');
+    return res.json(mandiData);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
   }
 });
 
@@ -198,7 +315,7 @@ router.post('/sms', async (req, res) => {
 
 /**
  * POST /api/gemini/advisory
- * Generate concise, smallholder farmer advisory
+ * Generate concise, smallholder farmer advisory (multilingual: en, sw, ta)
  */
 router.post('/gemini/advisory', async (req, res) => {
   try {

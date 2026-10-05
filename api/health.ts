@@ -2,6 +2,8 @@ export default async function handler(req: any, res: any) {
   const isdaConfigured = Boolean(process.env.ISDA_EMAIL && process.env.ISDA_PASSWORD);
   const atConfigured = Boolean(process.env.AT_SANDBOX_API_KEY);
   const geminiConfigured = Boolean(process.env.GEMINI_API_KEY);
+  const dataGovInKey = process.env.DATA_GOV_IN_API_KEY?.trim();
+  const hasDataGovInKey = Boolean(dataGovInKey);
 
   let isdaStatus: string = 'demo_fallback_active';
   let isdaStatusCode: number | null = null;
@@ -36,14 +38,41 @@ export default async function handler(req: any, res: any) {
     }
   }
 
+  // data.gov.in Agmarknet probe
+  let dataGovInStatus = 'no_data_today';
+  let dataGovInStatusCode: number | null = null;
+
+  if (hasDataGovInKey) {
+    try {
+      const url = `https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070?api-key=${dataGovInKey}&format=json&limit=1&filters[state.keyword]=Tamil%20Nadu`;
+      const mandiRes = await fetch(url);
+      dataGovInStatusCode = mandiRes.status;
+
+      if (mandiRes.ok) {
+        const json = await mandiRes.json().catch(() => ({}));
+        if (Array.isArray(json.records) && json.records.length > 0) {
+          dataGovInStatus = 'online';
+        } else {
+          dataGovInStatus = 'no_data_today';
+        }
+      } else {
+        dataGovInStatus = 'auth_failed';
+      }
+    } catch {
+      dataGovInStatus = 'auth_failed';
+      dataGovInStatusCode = 500;
+    }
+  }
+
   const healthPayload = {
     status: 'healthy',
     timestamp: new Date().toISOString(),
     uptimeSeconds: Math.floor(process.uptime ? process.uptime() : 0),
     environment: process.env.NODE_ENV || 'production',
     service: 'FarmSense API Gateway',
-    version: '1.0.0',
+    version: '1.1.0',
     integrations: {
+      // Africa Integrations
       isdaSoil: {
         status: isdaStatus,
         endpoint: 'https://api.isda-africa.com/isdasoil/v2',
@@ -58,11 +87,6 @@ export default async function handler(req: any, res: any) {
         username: process.env.AT_SANDBOX_USERNAME || 'sandbox',
         hasApiKey: atConfigured,
       },
-      geminiAi: {
-        status: geminiConfigured ? 'configured' : 'rule_fallback_active',
-        model: 'gemini-3.8-flash',
-        hasApiKey: geminiConfigured,
-      },
       digitalEarthAfrica: {
         status: 'online',
         endpoint: 'https://explorer.digitalearth.africa/stac/search',
@@ -72,6 +96,41 @@ export default async function handler(req: any, res: any) {
         status: 'online',
         endpoint: 'https://api.open-meteo.com/v1/forecast',
         authRequired: false,
+      },
+
+      // South India Integrations
+      soilGrids: {
+        status: 'online',
+        endpoint: 'https://rest.isric.org/soilgrids/v2.0',
+        caching: '30-day server cache active',
+        authRequired: false,
+      },
+      earthSearch: {
+        status: 'online',
+        endpoint: 'https://earth-search.aws.element84.com/v1',
+        authRequired: false,
+      },
+      openMeteoIndia: {
+        status: 'online',
+        timezone: 'Asia/Kolkata',
+        endpoint: 'https://api.open-meteo.com/v1/forecast',
+        authRequired: false,
+      },
+      dataGovIn: {
+        status: dataGovInStatus,
+        ...(dataGovInStatusCode !== null ? { statusCode: dataGovInStatusCode } : {}),
+        hasApiKey: hasDataGovInKey,
+        resourceId: '9ef84268-d588-465a-a308-a864a43d0070',
+        note: hasDataGovInKey
+          ? 'Live Agmarknet feed query active'
+          : 'Snapshot mode active (Agmarknet Tamil Nadu baseline)',
+      },
+
+      // Shared AI
+      geminiAi: {
+        status: geminiConfigured ? 'configured' : 'rule_fallback_active',
+        model: 'gemini-3.8-flash',
+        hasApiKey: geminiConfigured,
       },
     },
   };
