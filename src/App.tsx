@@ -50,6 +50,7 @@ export default function App() {
   const [advisoryLanguage, setAdvisoryLanguage] = useState<'en' | 'sw'>('en');
   const [advisory, setAdvisory] = useState<AdvisoryResponse | null>(null);
   const [isAdvisoryLoading, setIsAdvisoryLoading] = useState<boolean>(false);
+  const lastAdvisoryKeyRef = React.useRef<string>('');
 
   // Modals state
   const [isSmsModalOpen, setIsSmsModalOpen] = useState(false);
@@ -181,9 +182,8 @@ export default function App() {
           timestamp: new Date().toISOString(),
           generatedBy: data.generatedBy,
         });
-      } catch (err: any) {
+      } catch {
         // Fallback advisory directly constructed from verified numbers without crashing
-        console.warn('Advisory generation fallback:', err);
         const fallbackText =
           lang === 'sw'
             ? `Ushauri wa Shamba: ${
@@ -210,7 +210,7 @@ export default function App() {
           text: fallbackText,
           wordCount: fallbackText.split(/\s+/).filter(Boolean).length,
           timestamp: new Date().toISOString(),
-          generatedBy: 'deterministic-rules',
+          generatedBy: 'advisory-rules',
         });
       } finally {
         setIsAdvisoryLoading(false);
@@ -219,12 +219,16 @@ export default function App() {
     [location, soilData, weatherData, satelliteData, decisions, rainTotal, cloudCover]
   );
 
-  // Trigger advisory formulation once core data settles
+  // Trigger advisory formulation only once when core data settles or changes
   useEffect(() => {
     if (!isSoilLoading && !isSatelliteLoading && !isWeatherLoading) {
-      generateAdvisoryText(advisoryLanguage);
+      const signature = `${location.lat.toFixed(3)}_${location.lon.toFixed(3)}_${advisoryLanguage}_${soilPh?.toFixed(1) || '0'}_${rainTotal?.toFixed(0) || '0'}`;
+      if (signature !== lastAdvisoryKeyRef.current) {
+        lastAdvisoryKeyRef.current = signature;
+        generateAdvisoryText(advisoryLanguage);
+      }
     }
-  }, [isSoilLoading, isSatelliteLoading, isWeatherLoading, advisoryLanguage]);
+  }, [isSoilLoading, isSatelliteLoading, isWeatherLoading, advisoryLanguage, location.lat, location.lon, soilPh, rainTotal, generateAdvisoryText]);
 
   // Save new thresholds
   const handleSaveThresholds = (newConfig: ThresholdConfig) => {
@@ -328,7 +332,10 @@ export default function App() {
             setAdvisoryLanguage(lang);
             generateAdvisoryText(lang);
           }}
-          onRefreshAdvisory={() => generateAdvisoryText(advisoryLanguage)}
+          onRefreshAdvisory={() => {
+            lastAdvisoryKeyRef.current = '';
+            generateAdvisoryText(advisoryLanguage);
+          }}
           onOpenSmsModal={() => setIsSmsModalOpen(true)}
         />
       </main>
