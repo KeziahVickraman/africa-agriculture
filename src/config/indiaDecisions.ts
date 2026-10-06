@@ -320,6 +320,26 @@ export function computeIndiaDecisions(
       return commLower.includes(cropKey);
     });
 
+    // If no matching records exist in the feed or snapshot
+    if (matchingRecords.length === 0) {
+      const errStatus = mandi?.errorCode || (mandi?.error ? 'error' : 'no_data');
+      sellMap[cropKey] = {
+        id: `sell_${cropKey}`,
+        title: `Sell ${cropKey.toUpperCase()} now?`,
+        titleTa: `${cropKey} விற்கலாமா?`,
+        status: 'amber',
+        icon: 'pause',
+        verdictEn: 'PRICES UNAVAILABLE',
+        verdictTa: 'விலை விபரம் இல்லை',
+        shortEn: `Prices unavailable: data.gov.in error ${errStatus}.`,
+        shortTa: `விலை கிடைக்கவில்லை (பிழை ${errStatus}).`,
+        reasonEn: `Market prices unavailable right now (data.gov.in error ${errStatus}). Family target price is ₹${refPrice}/qtl. Never showing sample prices.`,
+        reasonTa: `சந்தை விலை தகவல் தற்போது கிடைக்கவில்லை (data.gov.in பிழை ${errStatus}). குடும்ப இலக்கு விலை ₹${refPrice}/குவிண்டால். மாதிரி விலைகள் காட்டப்படவில்லை.`,
+        thresholdNote: `Target Ref Price: ₹${refPrice}/qtl | Live price unavailable`,
+      };
+      return;
+    }
+
     // Check user chosen markets first if available
     let bestRecord = matchingRecords[0];
     if (matchingRecords.length > 1) {

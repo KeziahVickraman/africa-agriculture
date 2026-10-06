@@ -379,35 +379,58 @@ export const IndiaWebView: React.FC<IndiaWebViewProps> = ({
             </div>
           </div>
           <span className="text-xs font-mono text-amber-300 bg-amber-950 px-2.5 py-1 rounded border border-amber-800">
-            Feed fills through the day (best after 2 PM IST)
+            {mandi?.isRealTime ? 'Live Agmarknet Feed' : mandi?.lastSnapshotDate ? `Snapshot (${mandi.lastSnapshotDate})` : 'Feed Offline'}
           </span>
         </div>
 
-        {/* Dynamic Market Selector (up to 3 markets) */}
-        <div>
-          <label className="block text-xs font-semibold text-stone-300 mb-1.5">
-            Pick up to 3 target markets from live API feed:
-          </label>
-          <div className="flex flex-wrap gap-2">
-            {mandi?.availableMarkets.slice(0, 8).map((marketName) => {
-              const isSelected = selectedMarkets.includes(marketName);
-              return (
-                <button
-                  type="button"
-                  key={marketName}
-                  onClick={() => onSelectMarket(marketName)}
-                  className={`px-2.5 py-1 rounded-lg border text-xs transition cursor-pointer ${
-                    isSelected
-                      ? 'bg-amber-800/80 border-amber-500 text-white font-semibold'
-                      : 'bg-stone-950 border-stone-800 text-stone-400 hover:border-stone-700'
-                  }`}
-                >
-                  {marketName}
-                </button>
-              );
-            })}
+        {/* data.gov.in error banner with required message & snapshot date (Requirement 4) */}
+        {mandi?.error && (
+          <div className="bg-rose-950/80 border border-rose-600/80 rounded-xl p-3.5 text-xs text-rose-200 space-y-1">
+            <div className="font-bold text-rose-100 flex items-center gap-2">
+              <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>
+                Market prices unavailable right now (data.gov.in error {mandi.errorCode || 'offline'})
+              </span>
+            </div>
+            {mandi.lastSnapshotDate && mandi.records.length > 0 ? (
+              <p className="text-stone-300 pl-6">
+                Displaying the latest real saved snapshot from <strong>{mandi.lastSnapshotDate}</strong>. Never showing sample prices.
+              </p>
+            ) : (
+              <p className="text-stone-400 pl-6">
+                No previous real snapshot has been recorded yet. Never displaying sample prices.
+              </p>
+            )}
           </div>
-        </div>
+        )}
+
+        {/* Dynamic Market Selector (up to 3 markets) */}
+        {mandi && mandi.availableMarkets.length > 0 && (
+          <div>
+            <label className="block text-xs font-semibold text-stone-300 mb-1.5">
+              Pick up to 3 target markets from live API feed:
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {mandi.availableMarkets.slice(0, 8).map((marketName) => {
+                const isSelected = selectedMarkets.includes(marketName);
+                return (
+                  <button
+                    type="button"
+                    key={marketName}
+                    onClick={() => onSelectMarket(marketName)}
+                    className={`px-2.5 py-1 rounded-lg border text-xs transition cursor-pointer ${
+                      isSelected
+                        ? 'bg-amber-800/80 border-amber-500 text-white font-semibold'
+                        : 'bg-stone-950 border-stone-800 text-stone-400 hover:border-stone-700'
+                    }`}
+                  >
+                    {marketName}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Mandi Table */}
         <div className="overflow-x-auto">
@@ -425,47 +448,55 @@ export const IndiaWebView: React.FC<IndiaWebViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-stone-800">
-              {mandi?.records.slice(0, 10).map((r, idx) => {
-                const cropKey = r.commodity.toLowerCase();
-                const targetRefPrice = profile.referencePrices[cropKey] || 2000;
-                const shouldSell = r.modal_price >= targetRefPrice;
+              {mandi && mandi.records.length > 0 ? (
+                mandi.records.slice(0, 10).map((r, idx) => {
+                  const cropKey = r.commodity.toLowerCase();
+                  const targetRefPrice = profile.referencePrices[cropKey] || 2000;
+                  const shouldSell = r.modal_price >= targetRefPrice;
 
-                return (
-                  <tr key={idx} className="hover:bg-stone-800/40 transition">
-                    <td className="py-2.5 px-3 font-semibold text-white">
-                      {r.commodity}
-                      {r.isStateWide && (
-                        <span className="block text-[10px] text-amber-400 font-normal">
-                          State-wide price, not local
+                  return (
+                    <tr key={idx} className="hover:bg-stone-800/40 transition">
+                      <td className="py-2.5 px-3 font-semibold text-white">
+                        {r.commodity}
+                        {r.isStateWide && (
+                          <span className="block text-[10px] text-amber-400 font-normal">
+                            State-wide price, not local
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 text-stone-300">{r.market}</td>
+                      <td className="py-2.5 px-3 text-stone-400">{r.district}</td>
+                      <td className="py-2.5 px-3 text-stone-400">{r.variety}</td>
+                      <td className="py-2.5 px-3 font-mono font-bold text-amber-300">
+                        ₹{r.modal_price.toLocaleString('en-IN')}
+                      </td>
+                      <td className="py-2.5 px-3 font-mono text-stone-400">
+                        ₹{r.min_price} – ₹{r.max_price}
+                      </td>
+                      <td className="py-2.5 px-3 font-mono text-stone-300">
+                        ₹{targetRefPrice.toLocaleString('en-IN')}
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                            shouldSell
+                              ? 'bg-emerald-950 text-emerald-300 border border-emerald-700'
+                              : 'bg-amber-950 text-amber-300 border border-amber-700'
+                          }`}
+                        >
+                          {shouldSell ? 'SELL NOW' : 'HOLD'}
                         </span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-3 text-stone-300">{r.market}</td>
-                    <td className="py-2.5 px-3 text-stone-400">{r.district}</td>
-                    <td className="py-2.5 px-3 text-stone-400">{r.variety}</td>
-                    <td className="py-2.5 px-3 font-mono font-bold text-amber-300">
-                      ₹{r.modal_price.toLocaleString('en-IN')}
-                    </td>
-                    <td className="py-2.5 px-3 font-mono text-stone-400">
-                      ₹{r.min_price} – ₹{r.max_price}
-                    </td>
-                    <td className="py-2.5 px-3 font-mono text-stone-300">
-                      ₹{targetRefPrice.toLocaleString('en-IN')}
-                    </td>
-                    <td className="py-2.5 px-3">
-                      <span
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-                          shouldSell
-                            ? 'bg-emerald-950 text-emerald-300 border border-emerald-700'
-                            : 'bg-amber-950 text-amber-300 border border-amber-700'
-                        }`}
-                      >
-                        {shouldSell ? 'SELL NOW' : 'HOLD'}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr>
+                  <td colSpan={8} className="py-6 text-center text-stone-400 italic">
+                    Market prices unavailable right now (data.gov.in error {mandi?.errorCode || 'offline'}). Never displaying sample prices.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -496,7 +527,7 @@ export const IndiaWebView: React.FC<IndiaWebViewProps> = ({
           </div>
 
           {/* Sparkline / Trend row */}
-          {mandi?.historicalTrend[selectedTrendCommodity] && (
+          {mandi && mandi.historicalTrend && mandi.historicalTrend[selectedTrendCommodity] && mandi.historicalTrend[selectedTrendCommodity].length > 0 ? (
             <div className="grid grid-cols-7 gap-2 text-center text-xs">
               {mandi.historicalTrend[selectedTrendCommodity].map((item, idx) => (
                 <div key={idx} className="bg-stone-900 p-2 rounded-lg border border-stone-800">
@@ -507,6 +538,10 @@ export const IndiaWebView: React.FC<IndiaWebViewProps> = ({
                 </div>
               ))}
             </div>
+          ) : (
+            <p className="text-xs text-stone-500 italic py-2">
+              Historical trend will be plotted as real snapshots are recorded daily.
+            </p>
           )}
 
           <p className="text-[10px] text-stone-500 italic">

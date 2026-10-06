@@ -362,19 +362,19 @@ export class IndiaProvider implements DataProvider {
   async getMandiPrices(): Promise<MandiData> {
     try {
       const res = await fetch('/api/india/mandi');
-      if (!res.ok) throw new Error(`Mandi server returned HTTP ${res.status}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return await res.json();
     } catch (err: any) {
       return {
         records: [],
-        availableMarkets: ['Koyambedu Wholesale', 'Kanchipuram Regulated', 'Chengalpattu Regulated'],
-        selectedMarkets: ['Koyambedu Wholesale', 'Kanchipuram Regulated'],
-        lastSnapshotDate: new Date().toLocaleDateString('en-GB'),
+        availableMarkets: [],
+        lastSnapshotDate: null,
         isRealTime: false,
         hasApiKey: false,
         historicalTrend: {},
-        source: 'Agmarknet Tamil Nadu (Snapshot)',
-        error: err.message,
+        source: 'data.gov.in',
+        error: `Market prices unavailable right now (data.gov.in error ${err.message || 'offline'})`,
+        errorCode: err.message?.includes('HTTP') ? err.message.replace('HTTP ', '') : 'offline',
       };
     }
   }

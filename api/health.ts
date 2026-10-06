@@ -1,9 +1,10 @@
+import { probeDataGovIn } from '../server/indiaClient.ts';
+
 export default async function handler(req: any, res: any) {
   const isdaConfigured = Boolean(process.env.ISDA_EMAIL && process.env.ISDA_PASSWORD);
   const atConfigured = Boolean(process.env.AT_SANDBOX_API_KEY);
   const geminiConfigured = Boolean(process.env.GEMINI_API_KEY);
   const dataGovInKey = process.env.DATA_GOV_IN_API_KEY?.trim();
-  const hasDataGovInKey = Boolean(dataGovInKey);
 
   let isdaStatus: string = 'demo_fallback_active';
   let isdaStatusCode: number | null = null;
@@ -38,31 +39,8 @@ export default async function handler(req: any, res: any) {
     }
   }
 
-  // data.gov.in Agmarknet probe
-  let dataGovInStatus = 'no_data_today';
-  let dataGovInStatusCode: number | null = null;
-
-  if (hasDataGovInKey) {
-    try {
-      const url = `https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070?api-key=${dataGovInKey}&format=json&limit=1&filters[state.keyword]=Tamil%20Nadu`;
-      const mandiRes = await fetch(url);
-      dataGovInStatusCode = mandiRes.status;
-
-      if (mandiRes.ok) {
-        const json = await mandiRes.json().catch(() => ({}));
-        if (Array.isArray(json.records) && json.records.length > 0) {
-          dataGovInStatus = 'online';
-        } else {
-          dataGovInStatus = 'no_data_today';
-        }
-      } else {
-        dataGovInStatus = 'auth_failed';
-      }
-    } catch {
-      dataGovInStatus = 'auth_failed';
-      dataGovInStatusCode = 500;
-    }
-  }
+  // data.gov.in Agmarknet probe (Requirement 3: 401/403 -> auth_failed, 429 -> rate_limited, 5xx -> upstream_error, 200 with 0 records -> no_data_today)
+  const dataGovInProbe = await probeDataGovIn(dataGovInKey);
 
   const healthPayload = {
     status: 'healthy',
@@ -117,13 +95,11 @@ export default async function handler(req: any, res: any) {
         authRequired: false,
       },
       dataGovIn: {
-        status: dataGovInStatus,
-        ...(dataGovInStatusCode !== null ? { statusCode: dataGovInStatusCode } : {}),
-        hasApiKey: hasDataGovInKey,
+        status: dataGovInProbe.status,
+        ...(dataGovInProbe.statusCode != null ? { statusCode: dataGovInProbe.statusCode } : {}),
+        ...(dataGovInProbe.errorBodySnippet ? { errorBodySnippet: dataGovInProbe.errorBodySnippet } : {}),
+        hasApiKey: dataGovInProbe.hasApiKey,
         resourceId: '9ef84268-d588-465a-a308-a864a43d0070',
-        note: hasDataGovInKey
-          ? 'Live Agmarknet feed query active'
-          : 'Snapshot mode active (Agmarknet Tamil Nadu baseline)',
       },
 
       // Shared AI

@@ -110,13 +110,15 @@ export interface MandiRecord {
 export interface MandiData {
   records: MandiRecord[];
   availableMarkets: string[];
-  selectedMarkets: string[];
-  lastSnapshotDate: string;
+  selectedMarkets?: string[];
+  lastSnapshotDate: string | null;
   isRealTime: boolean;
   hasApiKey: boolean;
   historicalTrend: Record<string, Array<{ date: string; modal_price: number }>>;
   source: string;
   error?: string;
+  errorCode?: string;
+  errorSnippet?: string;
 }
 
 export interface DecisionResult {
